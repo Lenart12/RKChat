@@ -3,11 +3,12 @@ import struct
 import sys
 import threading
 
-PORT = 1234
+PORT = 10139
 HEADER_LENGTH = 2
 
+atos = lambda address: f'[{address[0]}:{address[1]}]'
 
-def receive_fixed_length_msg(sock, msglen):
+def receive_fixed_length_msg(sock: socket.socket, msglen: int):
     message = b''
     while len(message) < msglen:
         chunk = sock.recv(msglen - len(message))  # preberi nekaj bajtov
@@ -18,53 +19,58 @@ def receive_fixed_length_msg(sock, msglen):
     return message
 
 
-def receive_message(sock):
+def receive_message(sock: socket.socket):
     header = receive_fixed_length_msg(sock,
                                       HEADER_LENGTH)  # preberi glavo sporocila (v prvih 2 bytih je dolzina sporocila)
-    message_length = struct.unpack("!H", header)[0]  # pretvori dolzino sporocila v int
+    # pretvori dolzino sporocila v int
+    message_length = struct.unpack("!H", header)[0]
 
     message = None
     if message_length > 0:  # ce je vse OK
-        message = receive_fixed_length_msg(sock, message_length)  # preberi sporocilo
+        message = receive_fixed_length_msg(
+            sock, message_length)  # preberi sporocilo
         message = message.decode("utf-8")
 
     return message
 
 
-def send_message(sock, message):
-    encoded_message = message.encode("utf-8")  # pretvori sporocilo v niz bajtov, uporabi UTF-8 kodno tabelo
+def send_message(sock: socket.socket, message: str):
+    # pretvori sporocilo v niz bajtov, uporabi UTF-8 kodno tabelo
+    encoded_message = message.encode("utf-8")
 
     # ustvari glavo v prvih 2 bytih je dolzina sporocila (HEADER_LENGTH)
     # metoda pack "!H" : !=network byte order, H=unsigned short
     header = struct.pack("!H", len(encoded_message))
 
-    message = header + encoded_message  # najprj posljemo dolzino sporocilo, slee nato sporocilo samo
-    sock.sendall(message);
+    # najprj posljemo dolzino sporocilo, slee nato sporocilo samo
+    message = header + encoded_message
+    sock.sendall(message)
 
 
-# message_receiver funkcija tece v loceni niti
-def message_receiver():
+if __name__ == '__main__':
+    # message_receiver funkcija tece v loceni niti
+    def message_receiver():
+        while True:
+            msg_received = receive_message(sock)
+            if len(msg_received) > 0:  # ce obstaja sporocilo
+                print("[RKchat] " + msg_received)  # izpisi
+
+
+    # povezi se na streznik
+    print("[system] connecting to chat server ...")
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect(("localhost", PORT))
+    print("[system] connected!")
+
+    # zazeni message_receiver funkcijo v loceni niti
+    thread = threading.Thread(target=message_receiver)
+    thread.daemon = True
+    thread.start()
+
+    # pocakaj da uporabnik nekaj natipka in poslji na streznik
     while True:
-        msg_received = receive_message(sock)
-        if len(msg_received) > 0:  # ce obstaja sporocilo
-            print("[RKchat] " + msg_received)  # izpisi
-
-
-# povezi se na streznik
-print("[system] connecting to chat server ...")
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock.connect(("localhost", PORT))
-print("[system] connected!")
-
-# zazeni message_receiver funkcijo v loceni niti
-thread = threading.Thread(target=message_receiver)
-thread.daemon = True
-thread.start()
-
-# pocakaj da uporabnik nekaj natipka in poslji na streznik
-while True:
-    try:
-        msg_send = input("")
-        send_message(sock, msg_send)
-    except KeyboardInterrupt:
-        sys.exit()
+        try:
+            msg_send = input("")
+            send_message(sock, msg_send)
+        except KeyboardInterrupt:
+            sys.exit()
