@@ -2,6 +2,9 @@ import socket
 import struct
 import sys
 import threading
+import random
+import msgpack # python -m pip install msgpack
+from string import ascii_lowercase, digits
 
 PORT = 10139
 HEADER_LENGTH = 2
@@ -46,31 +49,94 @@ def send_message(sock: socket.socket, message: str):
     message = header + encoded_message
     sock.sendall(message)
 
+def send_pack(sock: socket.socket, o: dict):
+    msg = msgpack.packb(o)
+    header = struct.pack("!H", len(msg))
+    message = header + msg
+    sock.sendall(message)
+
+def read_pack(sock: socket.socket):
+    header = receive_fixed_length_msg(sock,HEADER_LENGTH) 
+    message_length = struct.unpack("!H", header)[0]
+    message = None
+    if message_length > 0:
+        message = receive_fixed_length_msg(sock, message_length)
+        message = msgpack.unpackb(message)
+
+    return message
+
+def registerNickname(sock: socket.socket, nickname: str):
+    send_pack(sock, {"type": "register", "user" : nickname})
+    while True:
+            try:
+                if msg_received := read_pack(sock):  # ce obstaja sporocilo
+                    if msg_received["type"] != "status" or msg_received["for"] != "register":
+                        continue
+                    if(msg_received["status"] == "success"):
+                        return True
+                    return msg_received["status"]
+            except Exception as e:
+                return e
 
 if __name__ == '__main__':
     # message_receiver funkcija tece v loceni niti
     def message_receiver():
         while True:
-            msg_received = receive_message(sock)
-            if len(msg_received) > 0:  # ce obstaja sporocilo
-                print("[RKchat] " + msg_received)  # izpisi
+            try:
+                if msg_received := read_pack(sock):  # ce obstaja sporocilo
+                    if msg_received['type'] == 'msg':
+                        print(f"[{msg_received['from']}] : {msg_received['msg']}")  # izpisi
+                    elif msg_received['type'] == 'msg-dm':
+                        print(f"[* {msg_received['from']}] : {msg_received['msg']}")  # izpisi
+                    if msg_received['type'] == 'status':
+                        print(f"!{msg_received['for']} : {msg_received['status']}")  # izpisi
+                    else:
+                        print(msg_received)
+            except ConnectionResetError:
+                print("[system] Connection reset by peer!")
+                sys.exit()
+
+    target_addr = 'localhost'
+    if addr := input(f'[system] Target chat server [{target_addr}]: '):
+        target_addr = addr
 
 
     # povezi se na streznik
-    print("[system] connecting to chat server ...")
+    print("[system] Connecting to chat server ...")
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect(("localhost", PORT))
-    print("[system] connected!")
+    try:
+        sock.connect((target_addr, PORT))
+    except ConnectionRefusedError:
+        print("[system] Cannot connect to server!")
+        sys.exit()
 
+    user = ''.join(random.sample(list(ascii_lowercase), 4) + random.sample(list(digits), 2))
+    if new_user := input(f'[system] Nickname [{user}]: '):
+        user = new_user
+    print("[system] Connected!")
+    
+    if (status := registerNickname(sock, user)) != True:
+        print(f"[system] Failed to register nickname! {status}")
+        sys.exit()
+    
     # zazeni message_receiver funkcijo v loceni niti
     thread = threading.Thread(target=message_receiver)
     thread.daemon = True
     thread.start()
 
+
     # pocakaj da uporabnik nekaj natipka in poslji na streznik
-    while True:
+    while sock.fileno() != -1:
         try:
-            msg_send = input("")
-            send_message(sock, msg_send)
+            if msg_send := input(f""):
+                for_ = ''
+                if msg_send.startswith('/w'):
+                    try:
+                        _, for_, msg_send = msg_send.split(' ', 2)
+                    except ValueError:
+                        print('Usage: /w [user] [message...]')
+                        continue
+
+                send_pack(sock, {"type": "msg", "msg" : msg_send, "for" : for_})
         except KeyboardInterrupt:
             sys.exit()
