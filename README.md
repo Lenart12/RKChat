@@ -16,6 +16,6 @@ Ce streznik javi da **ne najde chatClient** pomeni da je potrebno **zagnati** st
 
 `python chatClient.py`
 
-Najprej vprasa za naslov streznika in uporabnisko ime. Ce se pritisne enter se vnese vrednost, ki je v `[]`.
+Najprej vprasa za naslov streznika in potrebne certifikate uporabnika. Ce se pritisne enter se vnese vrednost, ki je v `[]`.
 
 Privatni pogovor se izvede z `/w [user] [message...]`
