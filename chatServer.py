@@ -4,12 +4,11 @@ import threading
 from chatClient import *
 
 # funkcija za komunikacijo z odjemalcem (tece v loceni niti za vsakega odjemalca)
-def client_thread(client_sock: socket.socket, client_addr: tuple[str, int]):
+def client_thread(client_sock: socket.socket, client_addr: tuple[str, int], current_user: str):
     global clients
     global users
 
     print(f"[system] Connected {atos(client_addr)} (total {len(clients)})")
-    current_user = ''
 
     try:
         while True:  # neskoncna zanka
@@ -19,22 +18,7 @@ def client_thread(client_sock: socket.socket, client_addr: tuple[str, int]):
                 break
 
             print(f"[RKchat] {atos(client_addr)} : {msg_received}")
-            if msg_received["type"] == "register":
-                if not current_user:
-                    current_user = msg_received['user'].strip()
-                    if ' ' in current_user or 'RKCHAT' in current_user.upper():
-                        send_pack(client_sock, {"type": "status", "for": "register", "status": "Invalid username to register"})
-                    else:
-                        if current_user in users:
-                            send_pack(client_sock, {"type": "status", "for": "register", "status": "Name already registred"})
-                        else:
-                            with users_lock:
-                                users[current_user] = client_sock
-                            send_pack(client_sock, {"type": "status", "for": "register", "status": "success"})
-                else:
-                    send_pack(client_sock, {"type": "status", "for": "register", "status": "Client already registred"})
-
-            elif msg_received["type"] == "msg" and current_user != '':
+            if msg_received["type"] == "msg":
                 if msg_received["for"] == "":
                     for client in clients:
                         if client != client_sock:
@@ -76,16 +60,42 @@ def main():
     server_socket.bind(bind_addr)
     server_socket.listen(1)
 
+    ctx = setup_SSL_context('cert/streznik.crt', 'cert/streznik.key', 'cert/odjemalci.pem')
+
     # cakaj na nove odjemalce
     print(f"[system] Listening on {atos(bind_addr)}")
     while True:
         try:
             # pocakaj na novo povezavo - blokirajoc klic
             client_sock, client_addr = server_socket.accept()
+
+            client_sock = ctx.wrap_socket(client_sock, server_side=True)
+
+            cert = client_sock.getpeercert()
+            user = ''
+            for sub in cert['subject']:
+                for key, value in sub:
+                    # v commonName je ime uporabnika
+                    if key == 'commonName':
+                        user = value
+
+            if not user:
+                send_pack(client_sock, {"type": "status", "for": "register", "status": "error", "error": "No name in certificate!"})
+                client_sock.close()
+                continue
+
+            if users.get(user, None) is not None:
+                send_pack(client_sock, {"type": "status", "for": "register", "status": "error", "error": "User already logged in!"})
+                client_sock.close()
+                continue
+            
             with clients_lock:
                 clients.add(client_sock)
 
-            thread = threading.Thread(target=client_thread, args=(client_sock, client_addr));
+            with users_lock:
+                users[user] = client_sock
+
+            thread = threading.Thread(target=client_thread, args=(client_sock, client_addr, user));
             thread.daemon = True
             thread.start()
 

@@ -2,14 +2,26 @@ import socket
 import struct
 import sys
 import threading
-import random
 import msgpack # python -m pip install msgpack
-from string import ascii_lowercase, digits
+import ssl
 
 PORT = 10139
 HEADER_LENGTH = 2
 
 atos = lambda address: f'[{address[0]}:{address[1]}]'
+
+def setup_SSL_context(cert: str, key: str, CA: str):
+  #uporabi samo TLS, ne SSL
+  context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+  # certifikat je obvezen
+  context.verify_mode = ssl.CERT_REQUIRED
+  #nalozi svoje certifikate
+  context.load_cert_chain(certfile=cert, keyfile=key)
+  # nalozi certifikate CAjev (samopodp. cert.= svoja CA!)
+  context.load_verify_locations(CA)
+  # nastavi SSL CipherSuites (nacin kriptiranja)
+  context.set_ciphers('ECDHE-RSA-AES128-GCM-SHA256')
+  return context
 
 def receive_fixed_length_msg(sock: socket.socket, msglen: int):
     message = b''
@@ -65,19 +77,6 @@ def read_pack(sock: socket.socket):
 
     return message
 
-def registerNickname(sock: socket.socket, nickname: str):
-    send_pack(sock, {"type": "register", "user" : nickname})
-    while True:
-            try:
-                if msg_received := read_pack(sock):  # ce obstaja sporocilo
-                    if msg_received["type"] != "status" or msg_received["for"] != "register":
-                        continue
-                    if(msg_received["status"] == "success"):
-                        return True
-                    return msg_received["status"]
-            except Exception as e:
-                return e
-
 if __name__ == '__main__':
     # message_receiver funkcija tece v loceni niti
     def message_receiver():
@@ -88,7 +87,7 @@ if __name__ == '__main__':
                         print(f"[{msg_received['from']}] : {msg_received['msg']}")  # izpisi
                     elif msg_received['type'] == 'msg-dm':
                         print(f"[* {msg_received['from']}] : {msg_received['msg']}")  # izpisi
-                    if msg_received['type'] == 'status':
+                    elif msg_received['type'] == 'status':
                         print(f"!{msg_received['for']} : {msg_received['status']}")  # izpisi
                     else:
                         print(msg_received)
@@ -100,24 +99,31 @@ if __name__ == '__main__':
     if addr := input(f'[system] Target chat server [{target_addr}]: '):
         target_addr = addr
 
+    cert = 'cert/elektron.crt'
+    if new_cert := input(f'[system] Certificate [{cert}]: '):
+        cert = new_cert
+
+    key = 'cert/elektron.key'
+    if new_key := input(f'[system] Key [{key}]: '):
+        key = new_key
+
+    ca = 'cert/streznik.crt'
+    if new_ca := input(f'[system] Verify location [{ca}]: '):
+        ca = new_ca
+    
+    ctx = setup_SSL_context(cert, key, ca)
 
     # povezi se na streznik
     print("[system] Connecting to chat server ...")
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock = ctx.wrap_socket(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
+
     try:
         sock.connect((target_addr, PORT))
     except ConnectionRefusedError:
         print("[system] Cannot connect to server!")
         sys.exit()
 
-    user = ''.join(random.sample(list(ascii_lowercase), 4) + random.sample(list(digits), 2))
-    if new_user := input(f'[system] Nickname [{user}]: '):
-        user = new_user
     print("[system] Connected!")
-    
-    if (status := registerNickname(sock, user)) != True:
-        print(f"[system] Failed to register nickname! {status}")
-        sys.exit()
     
     # zazeni message_receiver funkcijo v loceni niti
     thread = threading.Thread(target=message_receiver)
